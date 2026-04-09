@@ -2,7 +2,7 @@
 
 **ペット幻想合成画像メーカー** — ペットの写真を風景に幻想的に合成してSNSで共有できるWebアプリ
 
-👉 **[アプリを使う](https://pet-spirit-canvas.pages.dev)** ← Cloudflare Pages公開後
+👉 **[アプリを使う](https://pet-spirit-canvas.pages.dev)**
 
 ---
 
@@ -40,6 +40,17 @@ npm run dev
 cd app
 npm run build
 ```
+
+## CI/CD（GitHub Actions → Cloudflare Pages）
+
+mainブランチへのpushで自動デプロイが走ります。
+
+初回セットアップ時は以下の GitHub Secrets が必要です：
+
+| Secret | 内容 |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | [Cloudflare Dashboard](https://dash.cloudflare.com/profile/api-tokens) → "Edit Cloudflare Workers" テンプレートで作成（Pages:Edit権限追加） |
+| `CLOUDFLARE_ACCOUNT_ID` | `3c0a53b8900a8ffc94c3e5386ea99736`（設定済み） |
 
 ## 設計方針
 
