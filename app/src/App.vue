@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useCanvasStore } from './stores/canvas'
 import { resizeImageIfNeeded } from './utils/imageUtils'
 import { removeBg } from './utils/backgroundRemoval'
@@ -12,7 +12,9 @@ import ExportBar from './components/ExportBar.vue'
 const store = useCanvasStore()
 const canvasEditorRef = ref<InstanceType<typeof CanvasEditor>>()
 const errorMsg = ref('')
-const petErrors = ref<Record<string, string>>({})
+
+// removedUrl として払い出した Blob URL を追跡し、レイヤー削除時に revoke する
+const removedUrlMap = new Map<string, string>()
 
 function showError(msg: string) {
   errorMsg.value = msg
@@ -44,13 +46,27 @@ async function onPetUpload(file: File) {
     store.updateLayerStatus(id, 'processing')
 
     const removedUrl = await removeBg(url)
+    removedUrlMap.set(id, removedUrl)
     store.updateLayerStatus(id, 'done', removedUrl)
   } catch (e: unknown) {
     const msg = (e as Error).message ?? '背景除去に失敗しました'
     store.updateLayerStatus(id, 'error', undefined, msg)
-    petErrors.value[id] = msg
+    showError(msg)
   }
 }
+
+// レイヤー削除時に Blob URL を revoke してメモリを解放
+watch(
+  () => store.petLayers.map(l => l.id),
+  (newIds) => {
+    for (const [id, blobUrl] of removedUrlMap) {
+      if (!newIds.includes(id)) {
+        URL.revokeObjectURL(blobUrl)
+        removedUrlMap.delete(id)
+      }
+    }
+  },
+)
 </script>
 
 <template>
@@ -73,7 +89,7 @@ async function onPetUpload(file: File) {
 
     <!-- Error Banner -->
     <Transition name="fade">
-      <div v-if="errorMsg" class="error-banner">
+      <div v-if="errorMsg" class="error-banner" role="alert">
         ⚠️ {{ errorMsg }}
       </div>
     </Transition>
@@ -116,7 +132,7 @@ async function onPetUpload(file: File) {
             <span class="pet-status-badge" :class="layer.status">
               <template v-if="layer.status === 'processing'">
                 <span class="spinner" />
-                背景除去中…
+                除去中…
               </template>
               <template v-else-if="layer.status === 'done'">✅ 完了</template>
               <template v-else-if="layer.status === 'error'">❌ 失敗</template>
@@ -134,7 +150,16 @@ async function onPetUpload(file: File) {
       <div class="canvas-area">
         <CanvasEditor ref="canvasEditorRef" />
         <div class="usage-steps" v-if="!store.backgroundUrl">
-          <div class="step" v-for="(s, i) in ['風景画像をアップロード', 'ペット画像を追加（背景自動除去）', 'キャンバス上でドラッグ・調整', '完成したらPNGダウンロード']" :key="i">
+          <div
+            v-for="(s, i) in [
+              '風景画像をアップロード',
+              'ペット画像を追加（背景自動除去）',
+              'キャンバス上でドラッグ・調整',
+              '完成したらPNGダウンロード',
+            ]"
+            :key="i"
+            class="step"
+          >
             <span class="step-num">{{ i + 1 }}</span>
             <span class="step-text">{{ s }}</span>
           </div>
@@ -151,7 +176,10 @@ async function onPetUpload(file: File) {
 
     <!-- Export Bar -->
     <footer class="export-footer">
-      <ExportBar :get-stage="() => canvasEditorRef?.getStage()" />
+      <ExportBar
+        :get-stage="() => canvasEditorRef?.getStage()"
+        :get-display-scale="() => canvasEditorRef?.getDisplayScale() ?? 1"
+      />
     </footer>
   </div>
 </template>
@@ -168,6 +196,8 @@ html, body {
   color: #e2d9f3;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   min-height: 100vh;
+  /* モバイルでのバウンス・スクロール制御 */
+  overscroll-behavior: none;
 }
 
 #app {
@@ -186,27 +216,27 @@ html, body {
 .app-header {
   background: linear-gradient(135deg, #1a0a2e 0%, #16213e 100%);
   border-bottom: 1px solid rgba(124, 58, 237, 0.3);
-  padding: 16px 24px;
+  padding: 12px 16px;
 }
 .header-inner {
   max-width: 1400px;
   margin: 0 auto;
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 16px;
   flex-wrap: wrap;
 }
 .logo {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 .logo-icon {
-  font-size: 2.2rem;
+  font-size: 2rem;
 }
 .app-title {
   margin: 0;
-  font-size: 1.3rem;
+  font-size: 1.2rem;
   font-weight: 800;
   background: linear-gradient(135deg, #a78bfa, #f472b6);
   -webkit-background-clip: text;
@@ -215,12 +245,12 @@ html, body {
 }
 .app-subtitle {
   margin: 0;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   color: #9ca3af;
 }
 .app-desc {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: #9ca3af;
   flex: 1;
 }
@@ -230,7 +260,7 @@ html, body {
   background: rgba(239, 68, 68, 0.15);
   border-bottom: 1px solid rgba(239, 68, 68, 0.3);
   color: #fca5a5;
-  padding: 10px 24px;
+  padding: 10px 16px;
   font-size: 0.82rem;
   text-align: center;
 }
@@ -241,21 +271,20 @@ html, body {
 .main-layout {
   flex: 1;
   display: flex;
-  gap: 0;
+  gap: 12px;
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
-  padding: 16px;
-  gap: 16px;
+  padding: 12px 12px 0;
   align-items: flex-start;
 }
 
 .sidebar {
-  width: 220px;
+  width: 210px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .canvas-area {
@@ -263,28 +292,28 @@ html, body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 16px;
+  align-items: stretch;
+  gap: 12px;
 }
 
 .sidebar-section {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 12px;
-  padding: 14px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 .section-title {
   margin: 0;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 700;
   color: #c4b5fd;
 }
 .section-hint {
   margin: 0;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   color: #6b7280;
 }
 
@@ -294,14 +323,14 @@ html, body {
   gap: 8px;
 }
 .bg-thumb {
-  width: 60px;
-  height: 40px;
+  width: 56px;
+  height: 38px;
   object-fit: cover;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 .small-btn {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   padding: 3px 8px;
   border-radius: 4px;
   border: 1px solid transparent;
@@ -309,6 +338,7 @@ html, body {
   background: rgba(239, 68, 68, 0.15);
   border-color: rgba(239, 68, 68, 0.3);
   color: #fca5a5;
+  touch-action: manipulation;
 }
 .small-btn:hover {
   background: rgba(239, 68, 68, 0.3);
@@ -319,11 +349,11 @@ html, body {
   justify-content: space-between;
   align-items: center;
   font-size: 0.72rem;
-  padding: 4px 0;
+  padding: 3px 0;
 }
 .pet-status-name {
   color: #e5e7eb;
-  max-width: 100px;
+  max-width: 90px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -332,7 +362,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 0.68rem;
+  font-size: 0.67rem;
   color: #9ca3af;
 }
 .pet-status-badge.done { color: #6ee7b7; }
@@ -355,10 +385,10 @@ html, body {
 /* Usage Steps */
 .usage-steps {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: center;
-  padding: 16px;
+  padding: 12px 0;
 }
 .step {
   display: flex;
@@ -367,23 +397,23 @@ html, body {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  padding: 8px 14px;
+  padding: 7px 12px;
 }
 .step-num {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   background: linear-gradient(135deg, #7c3aed, #a855f7);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 800;
   color: white;
   flex-shrink: 0;
 }
 .step-text {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: #9ca3af;
 }
 
@@ -391,29 +421,56 @@ html, body {
 .export-footer {
   background: rgba(255, 255, 255, 0.02);
   border-top: 1px solid rgba(255, 255, 255, 0.07);
-  padding: 16px 24px;
+  padding: 12px 16px;
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
 }
 
-/* Responsive */
-@media (max-width: 900px) {
+/* ----- Mobile ----- */
+@media (max-width: 700px) {
   .main-layout {
     flex-direction: column;
-    align-items: stretch;
+    padding: 8px 8px 0;
+    gap: 8px;
   }
+
   .sidebar {
     width: 100%;
   }
-  .left-sidebar, .right-sidebar {
+
+  /* 左サイドバーはアコーディオン的に横並び */
+  .left-sidebar {
     flex-direction: row;
     flex-wrap: wrap;
   }
-  .left-sidebar .sidebar-section,
+  .left-sidebar .sidebar-section {
+    flex: 1 1 160px;
+    min-width: 0;
+  }
+
+  /* 右サイドバーも横並び */
+  .right-sidebar {
+    flex-direction: row;
+  }
   .right-sidebar .sidebar-section {
     flex: 1;
-    min-width: 200px;
+  }
+
+  .canvas-area {
+    align-items: stretch;
+  }
+
+  .usage-steps {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 8px 0;
+  }
+
+  .export-footer {
+    padding: 10px 12px;
+    /* iOS の safe area 対応 */
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
   }
 }
 </style>

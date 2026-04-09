@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import Konva from 'konva'
 import { useCanvasStore } from '../stores/canvas'
 import type { PetLayer } from '../stores/canvas'
 
 const store = useCanvasStore()
 
+const outerRef = ref<HTMLDivElement>()
 const containerRef = ref<HTMLDivElement>()
 const stageRef = ref<Konva.Stage>()
 const layerRef = ref<Konva.Layer>()
@@ -17,8 +18,13 @@ const petNodesMap = ref<Map<string, Konva.Image>>(new Map())
 const CANVAS_MAX_W = 860
 const CANVAS_MAX_H = 580
 
+// 表示用（ステージの論理サイズ）
 const canvasWidth = ref(CANVAS_MAX_W)
 const canvasHeight = ref(CANVAS_MAX_H)
+// コンテナに合わせた表示スケール
+const displayScale = ref(1)
+
+let resizeObserver: ResizeObserver | null = null
 
 function calcCanvasSize(bgW: number, bgH: number) {
   if (bgW === 0 || bgH === 0) return { w: CANVAS_MAX_W, h: CANVAS_MAX_H }
@@ -30,6 +36,19 @@ function calcCanvasSize(bgW: number, bgH: number) {
     w = Math.round(h * ratio)
   }
   return { w, h }
+}
+
+/**
+ * コンテナ幅に応じてステージを CSS スケーリング
+ * Konva の論理座標系は変えず、外側 div を transform: scale() するだけ
+ * → ドラッグ・タップ座標の補正は Konva が処理する
+ */
+function updateDisplayScale() {
+  if (!outerRef.value) return
+  const available = outerRef.value.clientWidth
+  if (available <= 0) return
+  const ratio = Math.min(1, available / canvasWidth.value)
+  displayScale.value = ratio
 }
 
 function initStage() {
@@ -53,7 +72,7 @@ function initStage() {
   layer.add(tr)
 
   stage.on('click tap', (e) => {
-    if (e.target === stage || e.target instanceof Konva.Image && e.target === bgImageRef.value) {
+    if (e.target === stage || (e.target instanceof Konva.Image && e.target === bgImageRef.value)) {
       store.selectLayer(null)
       tr.nodes([])
       layer.batchDraw()
@@ -93,6 +112,7 @@ function loadBgImage(url: string) {
       bgImageRef.value = konvaImg
     }
     layerRef.value!.batchDraw()
+    updateDisplayScale()
   }
   img.src = url
 }
@@ -110,12 +130,7 @@ function addPetNode(layer: PetLayer) {
     const x = (canvasWidth.value - layer.width * scale) / 2
     const y = (canvasHeight.value - layer.height * scale) / 2
 
-    store.updateLayerTransform(layer.id, {
-      x,
-      y,
-      scaleX: scale,
-      scaleY: scale,
-    })
+    store.updateLayerTransform(layer.id, { x, y, scaleX: scale, scaleY: scale })
 
     const node = new Konva.Image({
       id: layer.id,
@@ -132,15 +147,10 @@ function addPetNode(layer: PetLayer) {
       draggable: true,
     })
 
-    node.on('click tap', () => {
-      store.selectLayer(layer.id)
-    })
+    node.on('click tap', () => { store.selectLayer(layer.id) })
 
     node.on('dragend', () => {
-      store.updateLayerTransform(layer.id, {
-        x: node.x(),
-        y: node.y(),
-      })
+      store.updateLayerTransform(layer.id, { x: node.x(), y: node.y() })
     })
 
     node.on('transformend', () => {
@@ -203,97 +213,131 @@ function syncSelectedTransformer(id: string | null) {
   layerRef.value.batchDraw()
 }
 
-watch(() => store.backgroundUrl, (url) => {
-  if (url) loadBgImage(url)
-})
-
-watch(
-  () => store.petLayers.map(l => l.id),
-  (newIds, oldIds) => {
-    if (!oldIds) return
-    const removed = oldIds.filter(id => !newIds.includes(id))
-    removed.forEach(removePetNode)
-  },
-  { deep: true }
-)
-
-watch(
-  () => store.petLayers,
-  (layers) => {
-    layers.forEach(layer => {
-      if (layer.status === 'done' && layer.removedUrl) {
-        addPetNode(layer)
-      } else if (petNodesMap.value.has(layer.id)) {
-        updatePetNode(layer)
-      }
-    })
-    syncLayerOrder()
-  },
-  { deep: true }
-)
-
-watch(() => store.selectedLayerId, syncSelectedTransformer)
-
 function syncLayerOrder() {
   if (!layerRef.value) return
   store.petLayers.forEach((layer, idx) => {
     const node = petNodesMap.value.get(layer.id)
-    if (node) {
-      node.zIndex(idx + 1)
-    }
+    if (node) node.zIndex(idx + 1)
   })
   bringTransformerToTop()
   layerRef.value.batchDraw()
 }
 
-const exportImage = computed(() => store.isExporting)
-watch(exportImage, async (exporting) => {
-  if (exporting && stageRef.value) {
-    await new Promise(r => setTimeout(r, 50))
-  }
+// 背景画像の変更
+watch(() => store.backgroundUrl, (url) => {
+  if (url) loadBgImage(url)
 })
 
-defineExpose({ getStage: () => stageRef.value })
+// レイヤー追加・削除
+watch(
+  () => store.petLayers.map(l => l.id),
+  (newIds, oldIds) => {
+    if (!oldIds) return
+    oldIds.filter(id => !newIds.includes(id)).forEach(removePetNode)
+  },
+)
+
+// 処理完了 (status: done) になったらキャンバスに追加
+watch(
+  () => store.petLayers.map(l => ({ id: l.id, status: l.status, removedUrl: l.removedUrl })),
+  (layers) => {
+    layers.forEach(l => {
+      if (l.status === 'done' && l.removedUrl) addPetNode(store.petLayers.find(pl => pl.id === l.id)!)
+    })
+    syncLayerOrder()
+  },
+)
+
+// 表示プロパティの変更（opacity, visible, transform）を反映
+watch(
+  () => store.petLayers.map(l => ({
+    id: l.id, x: l.x, y: l.y, scaleX: l.scaleX, scaleY: l.scaleY,
+    rotation: l.rotation, opacity: l.opacity, visible: l.visible,
+  })),
+  (layers) => {
+    layers.forEach(l => {
+      if (petNodesMap.value.has(l.id)) {
+        updatePetNode(store.petLayers.find(pl => pl.id === l.id)!)
+      }
+    })
+  },
+)
+
+watch(() => store.selectedLayerId, syncSelectedTransformer)
+
+defineExpose({
+  getStage: () => stageRef.value,
+  getDisplayScale: () => displayScale.value,
+})
 
 onMounted(() => {
   initStage()
   if (store.backgroundUrl) loadBgImage(store.backgroundUrl)
+
+  resizeObserver = new ResizeObserver(() => updateDisplayScale())
+  if (outerRef.value) resizeObserver.observe(outerRef.value)
 })
 
 onUnmounted(() => {
+  resizeObserver?.disconnect()
   stageRef.value?.destroy()
 })
 </script>
 
 <template>
-  <div class="canvas-wrapper">
+  <div ref="outerRef" class="canvas-outer">
     <div
-      ref="containerRef"
-      class="konva-container"
-      :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
-    />
-    <div v-if="!store.backgroundUrl" class="canvas-placeholder">
-      <div class="placeholder-content">
-        <span class="ph-icon">🌄</span>
-        <span class="ph-text">風景画像をアップロードして開始</span>
+      class="canvas-wrapper"
+      :style="{
+        width: canvasWidth + 'px',
+        height: canvasHeight + 'px',
+        transform: `scale(${displayScale})`,
+        transformOrigin: 'top left',
+      }"
+    >
+      <div
+        ref="containerRef"
+        class="konva-container"
+        :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
+      />
+      <div v-if="!store.backgroundUrl" class="canvas-placeholder">
+        <div class="placeholder-content">
+          <span class="ph-icon">🌄</span>
+          <span class="ph-text">風景画像をアップロードして開始</span>
+        </div>
       </div>
     </div>
+    <!-- scale 分だけ外側 div の高さを確保するスペーサー -->
+    <div
+      aria-hidden="true"
+      :style="{
+        height: Math.round(canvasHeight * displayScale) + 'px',
+        pointerEvents: 'none',
+      }"
+    />
   </div>
 </template>
 
 <style scoped>
-.canvas-wrapper {
+.canvas-outer {
+  width: 100%;
   position: relative;
+}
+
+.canvas-wrapper {
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 4px 32px rgba(0, 0, 0, 0.4);
   background: #1a1a2e;
-  display: inline-block;
-  max-width: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
 }
+
 .konva-container {
   display: block;
 }
+
 .canvas-placeholder {
   position: absolute;
   inset: 0;
@@ -303,16 +347,19 @@ onUnmounted(() => {
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
   pointer-events: none;
 }
+
 .placeholder-content {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 12px;
 }
+
 .ph-icon {
   font-size: 3rem;
   opacity: 0.5;
 }
+
 .ph-text {
   font-size: 0.9rem;
   color: #6b7280;
