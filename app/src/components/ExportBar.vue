@@ -6,6 +6,7 @@ import { generateFilename } from '../utils/imageUtils'
 
 const props = defineProps<{
   getStage: () => Konva.Stage | undefined
+  getDisplayScale?: () => number
 }>()
 
 const store = useCanvasStore()
@@ -27,7 +28,10 @@ async function handleExport() {
 
   try {
     await new Promise(r => requestAnimationFrame(r))
-    const dataUrl = stage.toDataURL({ pixelRatio: 2, mimeType: 'image/png' })
+    // displayScale が 1 未満（モバイルで縮小表示）の場合は逆数を掛けてフル解像度で出力
+    const scale = props.getDisplayScale?.() ?? 1
+    const pixelRatio = scale > 0 ? 1 / scale : 1
+    const dataUrl = stage.toDataURL({ pixelRatio, mimeType: 'image/png' })
     const filename = generateFilename()
     lastFilename.value = filename
     const a = document.createElement('a')
@@ -54,7 +58,9 @@ function handleXShare() {
 async function handleWebShare() {
   const stage = props.getStage()
   if (!stage) return
-  const dataUrl = stage.toDataURL({ pixelRatio: 2, mimeType: 'image/png' })
+  const scale = props.getDisplayScale?.() ?? 1
+  const pixelRatio = scale > 0 ? 1 / scale : 1
+  const dataUrl = stage.toDataURL({ pixelRatio, mimeType: 'image/png' })
   const res = await fetch(dataUrl)
   const blob = await res.blob()
   const file = new File([blob], generateFilename(), { type: 'image/png' })
