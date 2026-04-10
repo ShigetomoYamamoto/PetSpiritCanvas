@@ -127,18 +127,20 @@ function addPetNode(layer: PetLayer) {
   img.onload = () => {
     const maxW = canvasWidth.value * 0.4
     const scale = layer.width > maxW ? maxW / layer.width : 1
-    const x = (canvasWidth.value - layer.width * scale) / 2
-    const y = (canvasHeight.value - layer.height * scale) / 2
+    const cx = canvasWidth.value / 2
+    const cy = canvasHeight.value / 2
 
-    store.updateLayerTransform(layer.id, { x, y, scaleX: scale, scaleY: scale })
+    store.updateLayerTransform(layer.id, { x: cx, y: cy, scaleX: scale, scaleY: scale })
 
     const node = new Konva.Image({
       id: layer.id,
       image: img,
-      x,
-      y,
+      x: cx,
+      y: cy,
       width: layer.width,
       height: layer.height,
+      offsetX: layer.width / 2,
+      offsetY: layer.height / 2,
       scaleX: scale,
       scaleY: scale,
       rotation: layer.rotation,
@@ -174,6 +176,8 @@ function addPetNode(layer: PetLayer) {
 function updatePetNode(layer: PetLayer) {
   const node = petNodesMap.value.get(layer.id)
   if (!node) return
+  node.offsetX(layer.width / 2)
+  node.offsetY(layer.height / 2)
   node.x(layer.x)
   node.y(layer.y)
   node.scaleX(layer.scaleX)
@@ -265,6 +269,18 @@ watch(
 
 watch(() => store.selectedLayerId, syncSelectedTransformer)
 
+// 書き出し中は Transformer を描画しない（PNG に枠が写り込まない）
+watch(
+  () => store.isExporting,
+  (exporting) => {
+    const tr = transformerRef.value
+    if (!tr || !layerRef.value) return
+    tr.visible(!exporting)
+    if (!exporting) syncSelectedTransformer(store.selectedLayerId)
+    layerRef.value.batchDraw()
+  },
+)
+
 defineExpose({
   getStage: () => stageRef.value,
   getDisplayScale: () => displayScale.value,
@@ -321,7 +337,9 @@ onUnmounted(() => {
 <style scoped>
 .canvas-outer {
   width: 100%;
+  max-width: 100%;
   position: relative;
+  overflow: hidden;
 }
 
 .canvas-wrapper {
