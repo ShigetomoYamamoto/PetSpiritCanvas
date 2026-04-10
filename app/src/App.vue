@@ -196,6 +196,8 @@ html, body {
   color: #e2d9f3;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   min-height: 100vh;
+  max-width: 100vw;
+  overflow-x: hidden;
   /* モバイルでのバウンス・スクロール制御 */
   overscroll-behavior: none;
 }
@@ -208,6 +210,8 @@ html, body {
 <style scoped>
 .app {
   min-height: 100vh;
+  max-width: 100%;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -225,6 +229,7 @@ html, body {
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 .logo {
   display: flex;
@@ -275,6 +280,7 @@ html, body {
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
+  min-width: 0;
   padding: 12px 12px 0;
   align-items: flex-start;
 }
@@ -425,10 +431,25 @@ html, body {
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 /* ----- Mobile ----- */
 @media (max-width: 700px) {
+  .app-header {
+    padding: 10px 12px;
+  }
+
+  .header-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .app-desc {
+    width: 100%;
+  }
+
   .main-layout {
     flex-direction: column;
     padding: 8px 8px 0;
@@ -437,34 +458,40 @@ html, body {
 
   .sidebar {
     width: 100%;
+    max-width: 100%;
   }
 
-  /* 左サイドバーはアコーディオン的に横並び */
+  /* 狭い画面ではサイドバーを縦積み（はみ出し・横スクロール防止） */
   .left-sidebar {
-    flex-direction: row;
-    flex-wrap: wrap;
+    flex-direction: column;
+    flex-wrap: nowrap;
   }
   .left-sidebar .sidebar-section {
-    flex: 1 1 160px;
+    flex: none;
+    width: 100%;
     min-width: 0;
   }
 
-  /* 右サイドバーも横並び */
   .right-sidebar {
-    flex-direction: row;
+    flex-direction: column;
   }
   .right-sidebar .sidebar-section {
-    flex: 1;
+    flex: none;
+    width: 100%;
+    min-width: 0;
   }
 
   .canvas-area {
     align-items: stretch;
+    width: 100%;
+    min-width: 0;
   }
 
   .usage-steps {
     flex-direction: column;
     align-items: flex-start;
     padding: 8px 0;
+    width: 100%;
   }
 
   .export-footer {

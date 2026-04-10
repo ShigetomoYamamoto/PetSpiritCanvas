@@ -13,38 +13,67 @@ const store = useCanvasStore()
 const exportStatus = ref<'idle' | 'exporting' | 'done' | 'error'>('idle')
 const errorMsg = ref('')
 const lastFilename = ref('')
+const lastExportWasShare = ref(false)
+
+/** ステージを PNG の File にレンダリング（書き出し中は Transformer を非表示） */
+async function renderStageToPngFile(): Promise<File> {
+  const stage = props.getStage()
+  if (!stage) throw new Error('キャンバスがありません')
+  store.setExporting(true)
+  await new Promise(r => requestAnimationFrame(r))
+  try {
+    const scale = props.getDisplayScale?.() ?? 1
+    const pixelRatio = scale > 0 ? 1 / scale : 1
+    const dataUrl = stage.toDataURL({ pixelRatio, mimeType: 'image/png' })
+    const res = await fetch(dataUrl)
+    const blob = await res.blob()
+    return new File([blob], generateFilename(), { type: 'image/png' })
+  } finally {
+    store.setExporting(false)
+  }
+}
 
 async function handleExport() {
-  const stage = props.getStage()
-  if (!stage) return
+  if (!props.getStage()) return
   if (!store.backgroundUrl) {
     errorMsg.value = '風景画像をアップロードしてください'
     return
   }
 
   exportStatus.value = 'exporting'
-  store.setExporting(true)
   errorMsg.value = ''
+  lastExportWasShare.value = false
 
   try {
-    await new Promise(r => requestAnimationFrame(r))
-    // displayScale が 1 未満（モバイルで縮小表示）の場合は逆数を掛けてフル解像度で出力
-    const scale = props.getDisplayScale?.() ?? 1
-    const pixelRatio = scale > 0 ? 1 / scale : 1
-    const dataUrl = stage.toDataURL({ pixelRatio, mimeType: 'image/png' })
-    const filename = generateFilename()
-    lastFilename.value = filename
-    const a = document.createElement('a')
-    a.href = dataUrl
-    a.download = filename
-    a.click()
+    const file = await renderStageToPngFile()
+    lastFilename.value = file.name
+
+    const sharePayload: ShareData = {
+      files: [file],
+      title: 'Pet Spirit Canvas',
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.canShare?.(sharePayload)) {
+      await navigator.share(sharePayload)
+      lastExportWasShare.value = true
+    } else {
+      const url = URL.createObjectURL(file)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.name
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+
     exportStatus.value = 'done'
-    setTimeout(() => (exportStatus.value = 'idle'), 3000)
+    setTimeout(() => (exportStatus.value = 'idle'), 4000)
   } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      exportStatus.value = 'idle'
+      return
+    }
     exportStatus.value = 'error'
     errorMsg.value = '書き出しに失敗しました。もう一度お試しください。'
-  } finally {
-    store.setExporting(false)
   }
 }
 
@@ -56,22 +85,18 @@ function handleXShare() {
 }
 
 async function handleWebShare() {
-  const stage = props.getStage()
-  if (!stage) return
-  const scale = props.getDisplayScale?.() ?? 1
-  const pixelRatio = scale > 0 ? 1 / scale : 1
-  const dataUrl = stage.toDataURL({ pixelRatio, mimeType: 'image/png' })
-  const res = await fetch(dataUrl)
-  const blob = await res.blob()
-  const file = new File([blob], generateFilename(), { type: 'image/png' })
+  if (!props.getStage() || !store.backgroundUrl) return
+  errorMsg.value = ''
   try {
+    const file = await renderStageToPngFile()
     await navigator.share({
       title: 'Pet Spirit Canvas',
       text: 'うちの子の思い出画像を作りました✨ #ペット #思い出',
       files: [file],
     })
-  } catch {
-    // cancelled
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') return
+    errorMsg.value = '共有に失敗しました。PNGダウンロードをお試しください。'
   }
 }
 
@@ -86,7 +111,7 @@ const canShare = typeof navigator !== 'undefined' && 'share' in navigator
       @click="handleExport"
     >
       <span v-if="exportStatus === 'exporting'">⏳ 書き出し中…</span>
-      <span v-else-if="exportStatus === 'done'">✅ ダウンロード完了!</span>
+      <span v-else-if="exportStatus === 'done'">✅ 完了!</span>
       <span v-else>⬇️ PNGダウンロード</span>
     </button>
 
@@ -105,7 +130,12 @@ const canShare = typeof navigator !== 'undefined' && 'share' in navigator
 
     <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
     <p v-if="exportStatus === 'done'" class="success-msg">
-      「{{ lastFilename }}」をダウンロードしました。Xに投稿する場合は、ダウンロードした画像を手動で添付してください。
+      <template v-if="lastExportWasShare">
+        共有シートが開きました。「写真に保存」やギャラリーへ保存を選べます。
+      </template>
+      <template v-else>
+        「{{ lastFilename }}」をダウンロードしました。Xに投稿する場合は、ダウンロードした画像を手動で添付してください。
+      </template>
     </p>
   </div>
 </template>
@@ -116,6 +146,7 @@ const canShare = typeof navigator !== 'undefined' && 'share' in navigator
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+  max-width: 100%;
 }
 .btn {
   padding: 10px 20px;
@@ -126,6 +157,8 @@ const canShare = typeof navigator !== 'undefined' && 'share' in navigator
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
+  max-width: 100%;
+  touch-action: manipulation;
 }
 .btn:disabled {
   opacity: 0.45;

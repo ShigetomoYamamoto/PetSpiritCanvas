@@ -60,7 +60,7 @@ export const useCanvasStore = defineStore('canvas', () => {
       height,
     }
     petLayers.value.push(layer)
-    selectedLayerId.value = id
+    // 追加直後は選択しない（キャンバス上の Transformer を出さない）
     return layer
   }
 
@@ -89,7 +89,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     const idx = petLayers.value.findIndex((l) => l.id === id)
     if (idx >= 0) petLayers.value.splice(idx, 1)
     if (selectedLayerId.value === id) {
-      selectedLayerId.value = petLayers.value[0]?.id ?? null
+      selectedLayerId.value = null
     }
   }
 
